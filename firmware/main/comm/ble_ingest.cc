@@ -15,6 +15,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include "app/roundlog.h"
 #include "app/wordstore.h"
 
 static const char* TAG = "BleIngest";
@@ -24,6 +25,10 @@ namespace {
 constexpr int kMaxFrame = 512;
 constexpr int kQueueDepth = 8;
 constexpr int64_t kNoticeIntervalUs = 400 * 1000;
+
+// 一条通知只有一个 ATT 包：MTU 512 减 3 字节头。超了不会自动分片，协议栈直接截断，
+// app 收到的就是半条 JSON。批量回传按这个上限切片。
+constexpr size_t kNtfMax = 509;
 
 constexpr char kDeviceName[] = "WORDCARD";
 
@@ -137,6 +142,7 @@ uint16_t g_data_value_handle = 0;
 int g_declared_words = 0;
 std::string g_last_word;
 int64_t g_last_notice_us = 0;
+uint16_t g_mtu = 23;
 
 esp_ble_adv_params_t g_adv_params;
 
@@ -151,8 +157,16 @@ void NotifyJson(cJSON* root) {
     }
     char* text = cJSON_PrintUnformatted(root);
     if (text != nullptr) {
-        esp_ble_gatts_send_indicate(g_gatts_if, g_conn_id, g_ntf_value_handle,
-                                    strlen(text), reinterpret_cast<uint8_t*>(text), false);
+        const size_t len = strlen(text);
+        // 超长只可能是切片预算算错了。丢掉比发半条好：app 等不到那轮会重取，
+        // 而截断的 JSON 只会让它报一个看不出原因的解析失败。
+        if (len > kNtfMax) {
+            ESP_LOGE(TAG, "通知 %u 字节超过单包上限 %u，已丢弃", static_cast<unsigned>(len),
+                     static_cast<unsigned>(kNtfMax));
+        } else {
+            esp_ble_gatts_send_indicate(g_gatts_if, g_conn_id, g_ntf_value_handle, len,
+                                        reinterpret_cast<uint8_t*>(text), false);
+        }
         cJSON_free(text);
     }
     cJSON_Delete(root);
@@ -245,6 +259,105 @@ void HandleStat() {
     cJSON_AddNumberToObject(root, "audio_ok", g_store->audio_ok());
     cJSON_AddNumberToObject(root, "audio_failed", g_store->audio_failed());
     cJSON_AddNumberToObject(root, "free_kb", static_cast<double>(free_bytes / 1024));
+
+    int pending_rounds = 0, pending_words = 0;
+    uint32_t oldest_round = 0;
+    roundlog::PendingSummary(&pending_rounds, &pending_words, &oldest_round);
+    cJSON_AddNumberToObject(root, "pending_rounds", pending_rounds);
+    cJSON_AddNumberToObject(root, "pending_words", pending_words);
+    cJSON_AddNumberToObject(root, "oldest_round", oldest_round);
+    NotifyJson(root);
+}
+
+// ---------------------------------------------------------------- 轮次结果回传
+
+// 一轮最多切成几十条通知，一条一个 ATT 包，中间不留间隔的话会把控制器发送队列压满。
+constexpr int kSliceGapMs = 10;
+// result_rows 的头部（t/u/n/f/d/i/r/L）实测 83 字节以内，按 128 留量。
+constexpr size_t kRowsHeadroom = 128;
+// 一行 `["word",1],` = 单词字节数 + 6，设备侧单词上限 63。
+constexpr size_t kRowFixedBytes = 6;
+constexpr size_t kRowMaxBytes = 63 + kRowFixedBytes;
+
+// 小 MTU（没谈到 512）时按实际值收窄，否则一片塞不下就会截断。
+size_t RowsBudget() {
+    size_t cap = g_mtu > 3 ? static_cast<size_t>(g_mtu - 3) : 0;
+    if (cap > kNtfMax) {
+        cap = kNtfMax;
+    }
+    if (cap <= kRowsHeadroom) {
+        return 0;
+    }
+    return cap - kRowsHeadroom;
+}
+
+void AddRow(cJSON* rows, const roundlog::Row& row) {
+    cJSON* item = cJSON_CreateArray();
+    cJSON_AddItemToArray(item, cJSON_CreateString(row.word.c_str()));
+    cJSON_AddItemToArray(item, cJSON_CreateNumber(row.forgotten ? 1 : 0));
+    cJSON_AddItemToArray(rows, item);
+}
+
+// 一轮的行按包切成多条 result_rows。每条都带 n/f/d 和片号 i：app 只要收到任意一条
+// 就知道这轮应该有多少行，凑不齐（比如中途断开）就不 ack，下次连上重新取整轮。
+void HandleResultGet(uint32_t uid) {
+    roundlog::Round round;
+    if (!roundlog::Get(uid, &round)) {
+        NotifyError("没有这一轮: " + std::to_string(uid));
+        return;
+    }
+    const size_t budget = RowsBudget();
+    if (budget < kRowMaxBytes) {
+        NotifyError("MTU 太小，取不了轮次结果");
+        return;
+    }
+
+    size_t index = 0;
+    int part = 0;
+    while (index < round.rows.size()) {
+        cJSON* root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "t", "result_rows");
+        cJSON_AddNumberToObject(root, "u", uid);
+        cJSON_AddNumberToObject(root, "n", static_cast<int>(round.rows.size()));
+        cJSON_AddNumberToObject(root, "f", round.forgotten_count);
+        cJSON_AddNumberToObject(root, "d", round.drilling ? 1 : 0);
+        cJSON_AddNumberToObject(root, "i", part);
+        cJSON* rows = cJSON_AddArrayToObject(root, "r");
+
+        size_t used = 0;
+        while (index < round.rows.size()) {
+            const size_t cost = round.rows[index].word.size() + kRowFixedBytes;
+            if (used + cost > budget && cJSON_GetArraySize(rows) > 0) {
+                break;
+            }
+            AddRow(rows, round.rows[index]);
+            used += cost;
+            index++;
+        }
+        const bool last = index >= round.rows.size();
+        cJSON_AddNumberToObject(root, "L", last ? 1 : 0);
+        NotifyJson(root);
+        part++;
+        if (!last) {
+            vTaskDelay(pdMS_TO_TICKS(kSliceGapMs));
+        }
+    }
+}
+
+void HandleResultAck(uint32_t uid) {
+    std::string err;
+    if (!roundlog::Ack(uid, &err)) {
+        NotifyError(err);
+        return;
+    }
+    int rounds = 0, words = 0;
+    uint32_t oldest = 0;
+    roundlog::PendingSummary(&rounds, &words, &oldest);
+    ESP_LOGI(TAG, "轮次 %lu 已入账，还剩 %d 轮", static_cast<unsigned long>(uid), rounds);
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "t", "result_ack_ok");
+    cJSON_AddNumberToObject(root, "u", uid);
+    cJSON_AddNumberToObject(root, "left", rounds);
     NotifyJson(root);
 }
 
@@ -319,6 +432,10 @@ void HandleJson(const uint8_t* payload, size_t len) {
         }
     } else if (strcmp(type, "stat") == 0) {
         HandleStat();
+    } else if (strcmp(type, "result_get") == 0) {
+        HandleResultGet(GetU32(root, "u", 0));
+    } else if (strcmp(type, "result_ack") == 0) {
+        HandleResultAck(GetU32(root, "u", 0));
     } else {
         NotifyError(std::string("未知命令: ") + type);
     }
@@ -554,6 +671,7 @@ void GattsCallback(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
     }
 
     case ESP_GATTS_MTU_EVT:
+        g_mtu = param->mtu.mtu;
         ESP_LOGI(TAG, "MTU=%d（单条命令上限 %d 字节）", param->mtu.mtu, param->mtu.mtu - 3);
         break;
 

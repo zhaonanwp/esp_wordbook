@@ -146,7 +146,9 @@ class BleLink extends ChangeNotifier {
       lastError = _errorOf(msg);
     }
     _recent.add(_Notification(++_seq, msg));
-    while (_recent.length > 64) {
+    // 一轮练习结果按片回传能一次出几十条，环形缓冲只留 64 条会把前面的片挤掉，
+    // app 就永远凑不齐那一轮（凑不齐不 ack，下次还是这样）。
+    while (_recent.length > 256) {
       _recent.removeFirst();
     }
     _notifications.add(msg);
@@ -226,6 +228,12 @@ class BleLink extends ChangeNotifier {
       if (item.msg['t'] == 'error') return _errorOf(item.msg);
     }
     return null;
+  }
+
+  /// 把此刻之前攒的回报全部作废。批量取结果中途失败时要用它收尾：残留的那条 error
+  /// 会飘到下一次推送的第一个 waitFor 上，把好好的一次推送顶成失败。
+  void drain() {
+    _consumed = _seq;
   }
 
   Future<void> disconnect() async {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/device_link.dart';
+import '../data/round_sync.dart';
 import '../data/schedule.dart';
 import '../data/sync_runner.dart';
 import '../data/wordbook_store.dart';
@@ -64,7 +65,9 @@ class _PlanPageState extends State<PlanPage> {
   Future<void> _push(DayPlan plan, List<PlanWord> rows) async {
     final runner = _runner;
     final sched = context.read<ScheduleStore>();
-    if (runner == null || runner.busy || !context.read<BleLink>().connected) {
+    final link = context.read<BleLink>();
+    final pool = ScheduleStore.poolOf(context.read<WordbookStore>().weeks);
+    if (runner == null || runner.busy || !link.connected) {
       return;
     }
     final picked = _today(rows);
@@ -80,19 +83,30 @@ class _PlanPageState extends State<PlanPage> {
       words: [for (final p in picked) p.entry],
       audioMark: Map.of(_router.merged),
     );
+    ImportSummary? got;
     try {
       await runner.push(
         sheet,
         withAudio: _withAudio,
         forceAudio: _forceAudio,
         persist: (book) => _router.writeBack(book),
+        collect: () async => got = await importDeviceRounds(
+          link: link,
+          store: sched,
+          pool: pool,
+          today: DateTime.now(),
+        ),
       );
       // 推成功才开始算日子；半途失败的话明天还是同一张表。
       await sched.introduce(picked, DateTime.now());
       await sched.recordPush([for (final p in picked) p.word], DateTime.now());
       _router.reindex();
       if (!mounted) return;
-      setState(() => _message = '已推 ${picked.length} 词，设备上现在就是今天这张表');
+      setState(() {
+        _message =
+            '已推 ${picked.length} 词，设备上现在就是今天这张表'
+            '${got == null ? '' : '\n${got!.line}'}';
+      });
     } on LinkException catch (e) {
       if (mounted) setState(() => _message = '推送失败：${e.message}');
     } on YoudaoException catch (e) {

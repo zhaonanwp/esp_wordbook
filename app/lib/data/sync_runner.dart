@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../core/protocol.dart';
 import 'device_link.dart';
+import 'round_sync.dart';
 import 'wordbook_store.dart';
 import 'youdao.dart';
 
@@ -90,6 +91,9 @@ class SyncRunner extends ChangeNotifier {
     required bool withAudio,
     bool forceAudio = false,
     Future<void> Function(WeekBook)? persist,
+    /// 先把设备上练完的轮次收回来入账，再推今天这张表。取不成都继续推：
+    /// 结果还留在设备的 rounds.tsv 里，下次连接接着取。
+    Future<ImportSummary> Function()? collect,
   }) async {
     if (_busy) return;
     _busy = true;
@@ -117,6 +121,12 @@ class SyncRunner extends ChangeNotifier {
           '有 ${tooLong.length} 个词超过设备字段长度，会被截断：\n'
           '${tooLong.take(5).join('\n')}',
         );
+      }
+
+      stage = '收结果';
+      notifyListeners();
+      if (collect != null) {
+        _say((await collect()).line);
       }
 
       stage = '推词表';

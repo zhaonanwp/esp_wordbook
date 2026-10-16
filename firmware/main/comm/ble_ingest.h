@@ -21,6 +21,18 @@ class Wordstore;
 //   {"t":"au_begin","w":"cold","fmt":"mp3","len":11234,"crc32":4046945303}
 //   {"t":"au_end"}
 //   {"t":"stat"}
+//   {"t":"result_get","u":3276801}
+//   {"t":"result_ack","u":3276801}
+//
+// 轮次结果回传（设备→app）：小孩是断开蓝牙练的，一轮练完的词和「想不起来」落在
+// storage 的 rounds.tsv 里等 app 取。设备没有墙钟，也只存事实：归账日期、档位、
+// 去重全由 app 定。
+//   stat 里带 pending_rounds / pending_words / oldest_round（oldest_round = 该取哪一轮）
+//   result_rows 一轮切成若干条通知，每条一个 ATT 包（上限 509 字节，超了会截断）：
+//     {"t":"result_rows","u":uid,"n":总行,"f":想不起来,"d":1 错词重练,"i":片号,
+//      "L":1 是最后一片,"r":[["cold",0],...]}
+//   app 数不满 n 就别 ack；ack 之后设备才把这轮从文件里去掉，ack_ok 里 left 是还剩几轮。
+//   取走顺序就是练的顺序，一轮 ack 一轮，下次 stat 的 oldest_round 自动往后走。
 //
 // 0xFFE3 帧头 10 字节：A5 5A | type=1 | flags(bit0 首帧 bit1 末帧) | offset u32 小端
 //   | payload 长度 u16 小端 | payload。offset 必须等于已收字节数，

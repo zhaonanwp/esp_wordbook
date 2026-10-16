@@ -17,6 +17,7 @@
 #include "app/batterylog.h"
 #include "app/card_ui.h"
 #include "app/pronouncer.h"
+#include "app/roundlog.h"
 #include "app/storage.h"
 #include "app/style_probe.h"
 #include "app/wordbook.h"
@@ -43,7 +44,8 @@ struct Viewer {
     // 本轮要过的词（词表下标）。闪卡是单向队列，过完进小结，小结再决定下一轮的队列。
     std::vector<size_t> queue;
     size_t pos = 0;
-    // 本轮按了"想不起来"的词。只活在内存里：关机清零，统计以后由手机 app 取。
+    // 本轮按了"想不起来"的词，只用于小结页显示和错词重练的队列。
+    // 存档另走 roundlog（按键回调在 esp_timer 任务里，不能写盘）。
     std::vector<size_t> unknown;
     bool drilling = false;  // 本轮是不是错词重练
     bool at_summary = false;
@@ -141,6 +143,16 @@ std::vector<size_t> AllIndices() {
     return indices;
 }
 
+// 轮次日志要的是文字快照，和 viewer.queue 逐项对齐（下标就是本轮内的位置）。
+std::vector<std::string> WordSnapshot(const std::vector<size_t>& indices) {
+    std::vector<std::string> words;
+    words.reserve(indices.size());
+    for (size_t index : indices) {
+        words.push_back(viewer.book->At(index).word);
+    }
+    return words;
+}
+
 // 一轮过完的小结：错词列表拼成一串交给 UI，装不下就截断，别溢到提示条上。
 void ShowSummaryPage() {
     char words[256];
@@ -188,6 +200,7 @@ void ShowCurrent() {
 
 void StartRound(std::vector<size_t> queue, bool drilling) {
     pron::Stop();
+    roundlog::Begin(WordSnapshot(queue), drilling);
     viewer.queue = std::move(queue);
     viewer.drilling = drilling;
     viewer.pos = 0;
@@ -211,6 +224,7 @@ void RevealOrNext() {
     pron::Stop();
     if (viewer.pos + 1 >= viewer.queue.size()) {
         viewer.at_summary = true;
+        roundlog::EndRound();
         ShowSummaryPage();
         return;
     }
@@ -321,6 +335,7 @@ void PressRight(void*, void*) {
     if (!viewer.revealed) {
         // 队列里的下标天然不重复，一个词一轮里最多被标一次，不用去重。
         viewer.unknown.push_back(viewer.queue[viewer.pos]);
+        roundlog::MarkForgotten(viewer.pos);
     }
     RevealOrNext();
 }
@@ -480,6 +495,7 @@ extern "C" void app_main() {
         return;
     }
     store.Recover();
+    roundlog::Init();
 
     viewer.ui = &ui;
     viewer.book = &book;

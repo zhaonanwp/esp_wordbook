@@ -1,15 +1,15 @@
 # WORDCARD 单词机
 
-基于 **Waveshare ESP32-S3-RLCD-4.2**（反射式液晶屏）做的实体背单词机：孩子每周从课堂拿回一批单词，家长在手机上录成词库、排好艾宾浩斯当天该复习的那一张表，用 BLE 推进设备；设备离线翻卡、播发音、记打勾。
+基于 **Waveshare ESP32-S3-RLCD-4.2**（反射式液晶屏）做的实体背单词机：孩子每周从课堂拿回一批单词，家长在手机上录成词库、排好艾宾浩斯当天该复习的那一张表，用 BLE 推进设备；设备离线翻卡、播发音，自己记住哪一轮哪个词被按了「想不起来」。
 
-设备**不联网**（固件里没有 Wi-Fi 栈），手机是词库的唯一源头。整条链路只有蓝牙 GATT 和一次发音音频的抓取。
+设备**不联网**（固件里没有 Wi-Fi 栈）。手机是词库的唯一源头，设备是练习结果的唯一记录者 —— 孩子练的时候蓝牙是断开的，一轮轮结果先攒在设备的 `rounds.tsv` 里，等下次连上手机再回传入账。整条链路只有蓝牙 GATT 和发音音频那一次抓取。
 
 ## 仓库结构
 
 | 目录 | 内容 |
 |---|---|
-| [`firmware/`](firmware/) | ESP-IDF 固件（C++ + LVGL 9.4），闪卡 UI、BLE 收词、发音播放、电池保护 |
-| [`app/`](app/) | Flutter 手机侧（仅 Android）：录词、排期、BLE 推送 |
+| [`firmware/`](firmware/) | ESP-IDF 固件（C++ + LVGL 9.4），闪卡 UI、BLE 收词、发音播放、轮次结果落盘、电池保护 |
+| [`app/`](app/) | Flutter 手机侧（仅 Android）：录词、排期、BLE 推送、把设备攒的轮次取回来入账 |
 | [`firmware/tools/ble_push.py`](firmware/tools/ble_push.py) | PC 侧推词/推发音脚本，是固件的验收工具，也是协议的参照实现 |
 
 协议在两处各有一份实现，改一边必须同步另一边：`app/lib/core/protocol.dart` ↔ `firmware/main/comm/ble_ingest.cc`。
@@ -53,7 +53,7 @@ dart analyze lib test && flutter test
 flutter build apk --release --target-platform android-arm64
 ```
 
-日常操作只有一条路径：**复习计划页**逐词打勾 → 推「今天这张表」。首页是只读概览，「整本重推」是维护工具（不记排期账）。页面职责、词库模型（来源 + 批次）、排期算法都写在 [`app/README.md`](app/README.md) 里。
+日常操作只有一条路径：**复习计划页**逐词打勾 → 推「今天这张表」。这一趟的开头会先把设备上攒下的轮次取回来入账，再推新表；「整本重推」那个维护入口不收结果、也不记排期账。首页是只读概览。页面职责、词库模型（来源 + 批次）、排期算法都写在 [`app/README.md`](app/README.md) 里。
 
 ## BLE 协议
 
@@ -63,6 +63,7 @@ flutter build apk --release --target-platform android-arm64
 - 词表是 TSV：`单词	音标	中文释义	例句`，`#` 开头是注释行
 - 设备侧字段是定长缓冲区（`snprintf`，超了静默截断）：word 63 / phonetic 95 / meaning 191 / example 319 字节（UTF-8），**手机侧必须先拦**
 - 发音音频推之前要按文件头魔数判容器 —— 有道的 `Content-Type` 对 RIFF/WAVE 也报 `audio/mpeg`
+- 结果是**反方向**回的：`stat` 里报 `pending_rounds` / `oldest_round`，手机按 `result_get` 取，一轮 `result_rows` 切成若干条通知（每条一个 ATT 包，上限 509 字节），数满才 `result_ack`，设备收到 ack 才把那轮从 `rounds.tsv` 删掉。设备没有墙钟，归账日期、档位、去重全在手机侧
 
 `tools/ble_push.py` 是一份能跑的最小实现，接协议时比读 C++ 快。
 

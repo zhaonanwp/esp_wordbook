@@ -166,6 +166,21 @@ class DayPlan {
       review.where((w) => w.record!.overdue(day) > 0).length;
 }
 
+/// 一轮设备结果入账的计数，只用来给推送页回一句话。
+class RoundTally {
+  /// 真的动了档案的词数。
+  int credited = 0;
+
+  /// 今天已经有过同样结论（一天练两遍、或者重复取回同一轮）。
+  int repeated = 0;
+
+  /// 词池里没有，对不上档，只数了个数。
+  int orphan = 0;
+
+  /// uid 早就记过账了，这次只是补 ack。
+  bool alreadyImported = false;
+}
+
 /// 记忆档案存在手机上（documents/schedule.json）：设备没有日期概念，也不掉电保存状态，
 /// 调度只能在有钟有历史的那一头算。
 class ScheduleStore extends ChangeNotifier {
@@ -174,6 +189,12 @@ class ScheduleStore extends ChangeNotifier {
   File? _file;
   final Map<String, MemoryRecord> _records = {};
   final Map<String, DayStat> _history = {};
+
+  /// 已经从设备取过账的轮次 uid。设备没有钟，一轮练完到 app 手里可能已经隔了一天，
+  /// 「哪一天」只能按取回来的那天算 —— 隔天再取同一轮，靠 (日期, 单词) 去重是挡不住的，
+  /// 只有 uid 认得出它是同一轮。ack 失败重取时也靠它避免二次记账。
+  final Set<int> _imported = {};
+
   bool _ready = false;
   bool get ready => _ready;
 
@@ -190,8 +211,22 @@ class ScheduleStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  int get trackedCount => _records.length;
-  int get masteredCount => _records.values.where((r) => r.mastered).length;
+  /// 档案条数，含已经不在词池里的那些。汇总数字别用它，用 [trackedIn]。
+  int get archivedCount => _records.length;
+  int trackedIn(List<PoolItem> pool) => liveRecords(pool).length;
+  int masteredIn(List<PoolItem> pool) =>
+      liveRecords(pool).where((r) => r.mastered).length;
+
+  /// 还在词池里的档案。口径和 [planFor] 一致：周表删过、拼写改过的词不占今天的名额，
+  /// 也就不该出现在首页那几个数上 —— 不然推得越久，"共 N 词"和孩子手上那份差得越远。
+  /// 档案本身一条都不删：把拼法改回去，进度本来就该还在。
+  List<MemoryRecord> liveRecords(List<PoolItem> pool) {
+    final inPool = {for (final p in pool) p.entry.word.toLowerCase()};
+    return [
+      for (final r in _records.values)
+        if (inPool.contains(r.word.toLowerCase())) r,
+    ];
+  }
 
   MemoryRecord? recordOf(String word) => _records[word.toLowerCase()];
 
@@ -211,18 +246,18 @@ class ScheduleStore extends ChangeNotifier {
     return out;
   }
 
-  /// 各档有多少词：0 = 刚上还没复习过，kGapDays.length = 毕业。
-  Map<int, int> boxHistogram() {
+  /// 各档有多少词：0 = 刚上还没复习过，kGapDays.length = 毕业。只数在词池里的。
+  Map<int, int> boxHistogram(List<PoolItem> pool) {
     final out = <int, int>{for (var b = 0; b <= kGapDays.length; b++) b: 0};
-    for (final r in _records.values) {
+    for (final r in liveRecords(pool)) {
       final b = r.box.clamp(0, kGapDays.length);
       out[b] = (out[b] ?? 0) + 1;
     }
     return out;
   }
 
-  List<MemoryRecord> struggling(int n) {
-    final rows = _records.values.where((r) => r.lapses > 0).toList()
+  List<MemoryRecord> struggling(int n, List<PoolItem> pool) {
+    final rows = liveRecords(pool).where((r) => r.lapses > 0).toList()
       ..sort((a, b) {
         final byLapse = b.lapses.compareTo(a.lapses);
         return byLapse != 0 ? byLapse : a.word.compareTo(b.word);
@@ -269,6 +304,14 @@ class ScheduleStore extends ChangeNotifier {
           ..addAll(hist);
         newPerDay = (json['newPerDay'] as num?)?.toInt() ?? newPerDay;
         activeSheet = (json['active'] ?? '') as String;
+        final taken = <int>{};
+        for (final v in (json['imported'] ?? []) as List) {
+          final n = v is num ? v.toInt() : int.tryParse('$v');
+          if (n != null && n != 0) taken.add(n);
+        }
+        _imported
+          ..clear()
+          ..addAll(taken);
       } catch (e) {
         debugPrint('ScheduleStore: 读不动 $_file: $e');
       }
@@ -287,6 +330,7 @@ class ScheduleStore extends ChangeNotifier {
       'active': activeSheet,
       'words': [for (final r in _records.values) r.toJson()],
       'history': [for (final s in _history.values) s.toJson()],
+      'imported': (_imported.toList()..sort()),
     };
     await tmp.writeAsString(jsonEncode(body), flush: true);
     await tmp.rename(file.path);
@@ -378,7 +422,7 @@ class ScheduleStore extends ChangeNotifier {
       intakeLabel: label,
       intakeLeft: mine.length - fresh.length,
       otherLeft: unlearned.length - mine.length,
-      masteredCount: masteredCount,
+      masteredCount: masteredIn(pool),
     );
   }
 
@@ -452,12 +496,24 @@ class ScheduleStore extends ChangeNotifier {
     DateTime today, {
     required bool remembered,
   }) async {
+    if (!_settle(word, label, dayOf(today), remembered: remembered)) return;
+    await _flush();
+    notifyListeners();
+  }
+
+  /// 一个词的一次结论。[report] 和设备轮次入账都走这里，档位算法只有一份。
+  /// 返回 false = 今天这个词已经有过同样的结论，不动账。
+  bool _settle(
+    String word,
+    String label,
+    DateTime day, {
+    required bool remembered,
+  }) {
     final key = word.toLowerCase();
-    final day = dayOf(today);
     final stat = statFor(day);
     // 打完勾那一行不会从今天这张表里消失（表是按推送记录算的），所以手滑点第二次
     // 完全可能。同一个结论一天只算一次，不然档位会被同一场练习往前推两格。
-    if ((remembered ? stat.marked : stat.forgotten).contains(key)) return;
+    if ((remembered ? stat.marked : stat.forgotten).contains(key)) return false;
     final r =
         _records[key] ??
         MemoryRecord(word: word, label: label, learnedDay: day, dueDay: day);
@@ -481,8 +537,141 @@ class ScheduleStore extends ChangeNotifier {
       stat.forgotten.add(key);
       stat.marked.remove(key);
     }
+    return true;
+  }
+
+  /// 设备过完的一轮直接入账，家长不用再对着屏幕勾一遍。
+  ///
+  /// 归到 [day]，也就是取回来的那天：设备没有墙钟，判不出这轮到底是哪天练的。
+  /// 词池里没有的词只数个数、不建档 —— 那是别的批次或改过拼法的残留，
+  /// 给它建档案只会把汇总数字做脏。
+  /// 只写盘一次：uid 和改动的档案、账本落在同一个 schedule.json 里。
+  /// ack 必须等这里返回之后再发，不然设备把轮次删了、这边却没记上。
+  Future<RoundTally> applyDeviceRound({
+    required int uid,
+    required DateTime day,
+    required List<String> words,
+    required Set<String> forgotten,
+    required List<PoolItem> pool,
+  }) async {
+    final tally = RoundTally();
+    if (_imported.contains(uid)) {
+      // 早就记过账，只是那次的 ack 没送达。档案一个字都不改，调用方补发 ack 就行。
+      tally.alreadyImported = true;
+      return tally;
+    }
+    final byWord = {for (final p in pool) p.entry.word.toLowerCase(): p};
+    final date = dayOf(day);
+    for (final word in words) {
+      final key = word.toLowerCase();
+      final p = byWord[key];
+      if (p == null) {
+        tally.orphan += 1;
+        continue;
+      }
+      if (
+        !_settle(
+          p.entry.word,
+          p.label,
+          date,
+          remembered: !forgotten.contains(key),
+        )
+      ) {
+        tally.repeated += 1;
+        continue;
+      }
+      tally.credited += 1;
+    }
+    _imported.add(uid);
     await _flush();
     notifyListeners();
+    return tally;
+  }
+
+  /// 覆盖重录一批时，旧表里消失的词如果和这次新进表的某个词只差一个拼法，
+  /// 把档案搬到新拼法上 —— 拼写记错了改回来，不该把练到第 5 档清零。
+  /// 认法故意留得窄（见 [_oneEditApart]），认不出来的一条都不动，原样留着，
+  /// 由 [liveRecords] 把它们挡在汇总数字外面。返回搬动了哪几对，给录入页回话用。
+  Future<List<String>> rehomeOrphans(
+    List<String> dropped,
+    List<String> appeared,
+  ) async {
+    final moved = <String>[];
+    final free = [
+      for (final w in appeared)
+        if (!_records.containsKey(w.toLowerCase())) w,
+    ];
+    final gone = <String, MemoryRecord>{};
+    for (final w in dropped) {
+      final r = _records[w.toLowerCase()];
+      if (r != null) gone[w.toLowerCase()] = r;
+    }
+    if (gone.isEmpty || free.isEmpty) return moved;
+
+    for (final entry in gone.entries.toList()) {
+      final r = entry.value;
+      final hits = free.where((t) => _oneEditApart(r.word, t)).toList();
+      // 两个拼法都接得上就走不通：猜错一次，进度就跟着别的词走，比清零更难查。
+      if (hits.length != 1) continue;
+      final pick = hits.single;
+      _rehome(r, pick);
+      moved.add('${r.word} → $pick');
+      free.remove(pick);
+    }
+    if (moved.isNotEmpty) {
+      await _flush();
+      notifyListeners();
+    }
+    return moved;
+  }
+
+  /// 换 key 保进度。当天账本里那几个集合也一起换，不然这个词今天已经打过勾了，
+  /// 换个拼法又能再进一次档（[report] 的去重按词文本认）。
+  void _rehome(MemoryRecord old, String to) {
+    final from = old.word.toLowerCase();
+    final key = to.toLowerCase();
+    _records
+      ..remove(from)
+      ..[key] = MemoryRecord(
+        word: to,
+        label: old.label,
+        learnedDay: old.learnedDay,
+        dueDay: old.dueDay,
+        box: old.box,
+        lastReview: old.lastReview,
+        lapses: old.lapses,
+      );
+    for (final s in _history.values) {
+      if (s.pushed.remove(from)) s.pushed.add(key);
+      if (s.marked.remove(from)) s.marked.add(key);
+      if (s.forgotten.remove(from)) s.forgotten.add(key);
+    }
+  }
+
+  /// 改动一个字母才算：换字母、加字母、删字母各算一次。比的是字母袋子不是编辑
+  /// 距离，改拼写常见的是丢双写（recieve→receive）。太短的词不认 —— `a` 和 `an`、
+  /// `in` 和 `it` 差一个字母，但它们是词组里另一个词，不是拼错。
+  static bool _oneEditApart(String a, String b) {
+    if (a.toLowerCase() == b.toLowerCase()) return false;
+    final x = _letterBag(a), y = _letterBag(b);
+    if (x.fold<int>(0, (s, v) => s + v) < 3 || y.fold<int>(0, (s, v) => s + v) < 3) {
+      return false;
+    }
+    var add = 0, del = 0;
+    for (var i = 0; i < 26; i++) {
+      if (x[i] > y[i]) del += x[i] - y[i];
+      if (y[i] > x[i]) add += y[i] - x[i];
+    }
+    return (add > del ? add : del) <= 1;
+  }
+
+  /// 只数 a-z：词组里的空格、连字符不算字母，`jump rope` 和 `jumprope` 视作同一个袋子。
+  static List<int> _letterBag(String w) {
+    final bag = List<int>.filled(26, 0);
+    for (final c in w.toLowerCase().codeUnits) {
+      if (c >= 97 && c <= 122) bag[c - 97] += 1;
+    }
+    return bag;
   }
 }
 

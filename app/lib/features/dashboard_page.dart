@@ -34,8 +34,8 @@ class DashboardPage extends StatelessWidget {
     final stat = sched.statFor(now);
     final sheet = sched.sheetOf(pool, plan, stat);
     final days = sched.recentDays(14, now);
-    final hist = sched.boxHistogram();
-    final worst = sched.struggling(5);
+    final hist = sched.boxHistogram(pool);
+    final worst = sched.struggling(5, pool);
 
     return Scaffold(
       appBar: AppBar(
@@ -72,7 +72,7 @@ class DashboardPage extends StatelessWidget {
           ),
           _section(
             context,
-            '档位分布（共 ${sched.trackedCount} 词）',
+            '档位分布（共 ${sched.trackedIn(pool)} 词）',
             _histogram(context, hist),
           ),
           _section(context, '最近两周每天上设备的词数', DayGrid(stats: days, today: now)),

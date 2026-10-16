@@ -15,6 +15,7 @@ idf_component_register(
         "app/card_ui.cc"
         "app/pronouncer.cc"
         "app/batterylog.cc"
+        "app/roundlog.cc"
         "app/style_probe.cc"
         "comm/ble_ingest.cc"
     INCLUDE_DIRS

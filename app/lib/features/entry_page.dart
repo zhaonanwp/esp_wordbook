@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../core/protocol.dart';
 import '../core/word_prompt.dart';
 import '../data/lexicon.dart';
+import '../data/schedule.dart';
 import '../data/wordbook_store.dart';
 import '../ui/hard_style.dart';
 
@@ -292,6 +293,23 @@ class _EntryPageState extends State<EntryPage> {
         if (old.containsKey(e.slug)) e.slug: old[e.slug]!,
     };
 
+    // 记忆档案按单词文本认人。覆盖时旧表整个作废，改了拼法的那个词在新表里是生面孔，
+    // 档案就没人认领 —— 练到第 5 档会一夜清零。先让 store 认一遍（只认差一个字母的，
+    // 认不出就不动），剩下的死档案由排期那边的词池口径挡在汇总数字外面。
+    final rehomed = <String>[];
+    if (existing != null && mode == 'replace') {
+      final fresh = {for (final e in words) e.word.toLowerCase()};
+      rehomed.addAll(
+        await context.read<ScheduleStore>().rehomeOrphans(
+          [
+            for (final e in existing.words)
+              if (!fresh.contains(e.word.toLowerCase())) e.word,
+          ],
+          [for (final e in words) e.word],
+        ),
+      );
+    }
+
     await store.save(
       WeekBook(
         label: label,
@@ -303,8 +321,11 @@ class _EntryPageState extends State<EntryPage> {
       ),
     );
     if (!mounted) return;
+    final moved = rehomed.isEmpty
+        ? ''
+        : '\n进度跟着新拼法搬过去：${rehomed.join('、')}';
     setState(
-      () => _message = '已存 $label（${words.length} 词，${marks.length} 个发音已在设备上）',
+      () => _message = '已存 $label（${words.length} 词，${marks.length} 个发音已在设备上）$moved',
     );
     ScaffoldMessenger.of(
       context,

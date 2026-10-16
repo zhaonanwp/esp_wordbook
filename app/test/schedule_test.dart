@@ -49,7 +49,7 @@ void main() {
     expect(plan.otherLeft, 0);
 
     await store.introduce(plan.words, d10);
-    expect(store.trackedCount, 6);
+    expect(store.trackedIn(pool), 6);
     // 学完当天不复习，明天才第一次到期。
     expect(store.recordOf('cold')!.dueDay, d10.add(const Duration(days: 1)));
   });
@@ -91,7 +91,7 @@ void main() {
       expect(store.recordOf('cold')!.box, i + 1);
     }
     expect(store.recordOf('cold')!.mastered, isTrue);
-    expect(store.masteredCount, 1);
+    expect(store.masteredIn([PoolItem(cold.entry, '2026W42')]), 1);
     // 毕业的词不再出现在任何一天的计划里，设备上也就不会再有它。
     final far = store.planFor(day.add(const Duration(days: 365)), [
       PoolItem(WordEntry(word: 'cold'), '2026W42'),
@@ -152,12 +152,73 @@ void main() {
       book('2026W42', ['cold', 'hot']),
     ]);
     await store.introduce(store.planFor(d10, pool).words, d10);
-    expect(store.trackedCount, 2);
+    expect(store.trackedIn(pool), 2);
 
     final empty = store.planFor(d10.add(const Duration(days: 1)), const []);
     expect(empty.review, isEmpty);
     expect(empty.fresh, isEmpty);
-    expect(store.trackedCount, 2);
+    // 档案一条都没少，可词池空了就不该再出现在任何汇总数字里。
+    expect(store.archivedCount, 2);
+    expect(store.trackedIn(const []), 0);
+    expect(store.struggling(5, const []), isEmpty);
+    expect(
+      store.boxHistogram(const []).values.fold<int>(0, (a, b) => a + b),
+      0,
+    );
+  });
+
+  test('覆盖重录改了拼法：档案跟着搬到新拼法，不从第一档重来', () async {
+    final store = ScheduleStore();
+    final pool = ScheduleStore.poolOf([
+      book('2026W42', ['recieve', 'hot']),
+    ]);
+    await store.introduce(store.planFor(d10, pool).words, d10);
+    await store.report(
+      'recieve',
+      '2026W42',
+      d10.add(const Duration(days: 1)),
+      remembered: true,
+    );
+    await store.report(
+      'recieve',
+      '2026W42',
+      d10.add(const Duration(days: 2)),
+      remembered: true,
+    );
+
+    final moved = await store.rehomeOrphans(['recieve'], ['receive', 'hot']);
+    expect(moved, ['recieve → receive']);
+    expect(store.recordOf('receive')!.box, 2);
+    expect(store.recordOf('recieve'), isNull);
+    // 归属还是原来那一批，档位和到期日子原样带过去。
+    expect(store.recordOf('receive')!.label, '2026W42');
+    expect(store.archivedCount, 2);
+  });
+
+  test('搬完档案，新拼法当天不能再进一次档', () async {
+    final store = ScheduleStore();
+    final pool = ScheduleStore.poolOf([book('2026W42', ['recieve'])]);
+    await store.introduce(store.planFor(d10, pool).words, d10);
+    final d11 = d10.add(const Duration(days: 1));
+    await store.report('recieve', '2026W42', d11, remembered: true);
+
+    await store.rehomeOrphans(['recieve'], ['receive']);
+    await store.report('receive', '2026W42', d11, remembered: true);
+    expect(store.recordOf('receive')!.box, 1);
+  });
+
+  test('认不出的不搬：两个拼法都接得上、或者短到两三个字母', () async {
+    final store = ScheduleStore();
+    final pool = ScheduleStore.poolOf([book('2026W42', ['cold', 'an'])]);
+    await store.introduce(store.planFor(d10, pool).words, d10);
+    // cold 既像 cord 又像 bold，猜不动；an→and 差一个字母，那是另一个词不是拼错。
+    final moved = await store.rehomeOrphans(
+      ['cold', 'an'],
+      ['cord', 'bold', 'and'],
+    );
+    expect(moved, isEmpty);
+    expect(store.recordOf('cold')!.box, 0);
+    expect(store.archivedCount, 2);
   });
 
   test('poolOf：最新一周先学，重复词只留一次并归到最新那本', () {
@@ -379,13 +440,13 @@ void main() {
     expect(days.first.pushed, isEmpty);
     expect(days.last.touched, 3);
 
-    final hist = store.boxHistogram();
+    final hist = store.boxHistogram(pool);
     expect(hist.length, kGapDays.length + 1);
     // 毕业占独立一列；忘了两次的词退回第 1 档，而不是从档案里抹掉。
     expect(hist[0], 2);
     expect(hist[1], 1);
     expect(hist.values.fold<int>(0, (a, b) => a + b), 3);
-    expect([for (final r in store.struggling(5)) r.word], ['felt', 'hot']);
+    expect([for (final r in store.struggling(5, pool)) r.word], ['felt', 'hot']);
   });
 
   test('推完今天这张表不缩水：新词当天还在名单里', () async {
