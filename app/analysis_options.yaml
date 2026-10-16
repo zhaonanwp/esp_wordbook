@@ -1,0 +1,11 @@
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    # 界面文案和日志都是中文，单引号统一下来才好全局搜；双引号只留给字符串里有单引号的场合。
+    prefer_single_quotes: true
+    # 调试输出统一走 debugPrint，release 包里会被剥掉；print 会留在产物里。
+    avoid_print: true
+    # MarkRouter(weeks:, save:) 这类闭包依赖故意用公开参数名：
+    # 换成 this._weeks 之后调用点得写 _weeks:，测试里更难读。
+    prefer_initializing_formals: false

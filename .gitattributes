@@ -1,0 +1,4 @@
+# 词表和分区表按 LF 存：设备侧和 PC 脚本都按 \n 切行
+* text=auto
+*.tsv text eol=lf
+*.csv text eol=lf

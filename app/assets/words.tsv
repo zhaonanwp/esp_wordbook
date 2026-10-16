@@ -1,0 +1,14 @@
+# 单词	音标	中文释义	例句
+# 样例词表：12 个词，其中 4 行没有例句（只有三列），用来验解析、字段截断和整条推送链路
+morning	/ˈmɔːnɪŋ/	n. 早上	She reads a book every morning.
+bread	/bred/	n. 面包	We buy bread on Saturday.
+cloud	/klaʊd/	n. 云	A white cloud is in the sky.
+drum	/drʌm/	n. 鼓	Tom plays the drum at school.
+garden	/ˈɡɑːdn/	n. 花园	Grandpa waters the garden.
+bridge	/brɪdʒ/	n. 桥	The bus goes over the bridge.
+often	/ˈɒfn/	adv. 经常	They often walk to school.
+puzzle	/ˈpʌzl/	n. 谜语	This is a hard puzzle.
+hungry	/ˈhʌŋɡri/	adj. 饿
+interesting	/ˈɪntrəstɪŋ/	adj. 有趣
+journey	/ˈdʒɜːni/	n. 旅行
+knife	/naɪf/	n. 小刀

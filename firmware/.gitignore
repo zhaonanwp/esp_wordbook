@@ -1,0 +1,20 @@
+# ESP-IDF 生成物
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+.cache/
+*.bin
+
+# 推词表脚本的一次性 venv（bleak 等依赖，pip 重装即可）
+tools/.venv-ble/
+
+# 手工快照
+*.bak
+
+# 放电日志产物（pull-battery-log.ps1 每次覆盖，不需要进版本库）
+battery-log.csv
+
+# 像素字体源文件（7MB，不进仓库；生成产物 font_pixel_24_1.c 才进）
+tools/fonts/*.ttf
+tools/fonts/*.zip

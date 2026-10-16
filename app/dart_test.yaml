@@ -1,0 +1,3 @@
+# test/look_dashboard_test.dart 只在 LOOK=1 时真的跑，用来出首页皮肤图。
+tags:
+  look:

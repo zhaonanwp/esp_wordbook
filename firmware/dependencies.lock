@@ -1,0 +1,80 @@
+dependencies:
+  espressif/button:
+    component_hash: 95babe831403e301511a22a4dfcd599abcf32cf72c7f8ac5352a61662363c9ea
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    - name: idf
+      require: private
+      version: '>=4.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 4.1.7
+  espressif/cmake_utilities:
+    component_hash: 05165f30922b422b4b90c08845e6d449329b97370fbd06309803d8cb539d79e3
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.1.1
+  espressif/esp_audio_codec:
+    component_hash: af4663830bc73eca58febcc34a976d003465e78ed57458aa00a14b231e392ca1
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.4.1
+  espressif/esp_codec_dev:
+    component_hash: df70f10af8d7b922add7b9d07372c9c97ab356e58d72b7a892050227c2d44348
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.5.11
+  espressif/esp_lvgl_port:
+    component_hash: b6360960f47b6776462e7092861b3ea66477ffb762a01baa0aecbb3d74cd50f4
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.1'
+    - name: lvgl/lvgl
+      registry_url: https://components.espressif.com
+      require: public
+      version: '>=8,<10'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.7.2
+  idf:
+    source:
+      type: idf
+    version: 5.5.4
+  lvgl/lvgl:
+    component_hash: 17e68bfd21f0edf4c3ee838e2273da840bf3930e5dbc3bfa6c1190c3aed41f9f
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 9.4.0
+direct_dependencies:
+- espressif/button
+- espressif/esp_audio_codec
+- espressif/esp_codec_dev
+- espressif/esp_lvgl_port
+- idf
+- lvgl/lvgl
+manifest_hash: 22ab82e1c79f0fb3e6f2ea2533150ab250e255629665203d315ad331bb9eb6cf
+target: esp32s3
+version: 2.0.0
