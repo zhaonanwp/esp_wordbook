@@ -7,13 +7,17 @@ import '../data/wordbook_store.dart';
 import '../data/youdao.dart';
 import '../ui/hard_style.dart';
 
-/// 整本重推（维护页）。把选中的**一整本周表**原样推上设备，用来兜底：
-/// 跑过 flash-all 把 storage 格了、或想把某一批整个灌回设备时用。
+/// 把选中的**一整本词库**原样推上设备，替换掉设备上那张表 —— 这就是日常那一下。
 ///
-/// 它**不记排期账**（不调 `introduce`/`recordPush`）—— 推完设备上是这一本，
-/// 但明天该推什么仍按计划页走。日常"推今天这张表"在计划页，不在这里。
+/// 发音文件按 slug 存在设备上、不随词表替换，勾「同时抓有道发音」才会动它们，
+/// 而 `audioMark` 记着设备上已经是这一份的那些，默认跳过（一个词省 5-7 秒）。
+/// 所以换一批通常只推文本，两三秒完事。
+///
+/// [label] 是从首页带进来的那一批；不传就退回"设备上现在这批"，再没有就第一本。
 class PushPage extends StatefulWidget {
-  const PushPage({super.key});
+  const PushPage({super.key, this.label});
+
+  final String? label;
 
   @override
   State<PushPage> createState() => _PushPageState();
@@ -35,7 +39,11 @@ class _PushPageState extends State<PushPage> {
       _youdao = Youdao(audioDir);
       _runner = SyncRunner(context.read<BleLink>(), _youdao!);
     }
-    if (store.weeks.isNotEmpty) _selected = store.weeks.first.label;
+    _selected = store.byLabel(widget.label ?? '') != null
+        ? widget.label!
+        : (store.byLabel(store.onDevice) != null
+              ? store.onDevice
+              : (store.weeks.isNotEmpty ? store.weeks.first.label : ''));
     // SyncRunner 不在 Provider 里，不自己挂监听的话推送期间界面整个冻住：
     // 进度条不动、日志不刷、按钮也不置灰。
     _runner?.addListener(_onRunner);
@@ -57,15 +65,21 @@ class _PushPageState extends State<PushPage> {
   Future<void> _push(WeekBook book) async {
     final runner = _runner;
     if (runner == null) return;
+    final store = context.read<WordbookStore>();
     try {
       await runner.push(
         book,
         withAudio: _withAudio,
         forceAudio: _forceAudio,
-        persist: context.read<WordbookStore>().save,
+        persist: store.save,
       );
+      // 整表替换是设备给的语义，走到这一步才算数：半途失败的话设备上还是原来那张表，
+      // 首页就不该改口说"现在装的是这批"。
+      await store.markOnDevice(book.label);
     } on LinkException catch (_) {
       // 已经写进日志了
+    } on YoudaoException catch (_) {
+      // 同上：抓不到发音也在 stage/log 里说了，这里不能再飘出未处理的异步错误
     }
   }
 
@@ -78,7 +92,7 @@ class _PushPageState extends State<PushPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('整本重推'),
+        title: const Text('推到设备'),
         actions: [
           HardIconButton(
             icon: Icons.info_outline,
@@ -116,8 +130,8 @@ class _PushPageState extends State<PushPage> {
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                '把选中的整本词表原样推上设备（维护用）。这一页不记排期账，'
-                '日常「推今天这张表」在复习计划页。',
+                '选中的那一整本会替换掉设备上的词表。发音文件按词存在设备上，'
+                '不跟着词表走 —— 不勾下面那项就一个都不动。',
                 style: Hard.body(context),
               ),
             ),
@@ -208,7 +222,10 @@ class _PushPageState extends State<PushPage> {
                                             CrossAxisAlignment.start,
                                         children: [
                                           Text(
-                                            entry.title,
+                                            entry.title +
+                                                (entry.label == store.onDevice
+                                                    ? '   ← 设备上'
+                                                    : ''),
                                             style: TextStyle(
                                               fontWeight: FontWeight.w800,
                                               color: on
@@ -274,10 +291,12 @@ class _PushPageState extends State<PushPage> {
             ),
           ),
           if (runner != null) ...[
-            Padding(
-              padding: Hard.gutter(bottom: 0),
-              child: HardBar(fraction: runner.progress),
-            ),
+            // 空闲时条子不占位：一根永远满格的灰线只会让人以为刚才那次推送卡住了。
+            if (runner.busy)
+              Padding(
+                padding: Hard.gutter(bottom: 0),
+                child: HardBar(fraction: runner.progress),
+              ),
             if (runner.busy || runner.log.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),

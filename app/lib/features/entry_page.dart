@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import '../core/protocol.dart';
 import '../core/word_prompt.dart';
 import '../data/lexicon.dart';
-import '../data/schedule.dart';
 import '../data/wordbook_store.dart';
 import '../ui/hard_style.dart';
 
@@ -60,8 +59,8 @@ class _EntryPageState extends State<EntryPage> {
   final _paste = TextEditingController();
   late final TextEditingController _label;
 
-  /// 这批词记在哪个来源下。课本按单元录、新东方一周一次课，来源只当分组和显示，
-  /// 不参与排日子 —— 每天抽哪一批是计划页那个选择器的事。
+  /// 这批词记在哪个来源下。课本按单元录、新东方一周一次课，两种节奏套不进同一个"周"，
+  /// 所以来源只当分组和显示，推哪一本永远是他在首页挑的。
   /// 列表本身在设定页里改，所以初值取 store 的第一个，不写死常量。
   String _source = kDefaultSource;
   final List<_Draft> _rows = [];
@@ -72,8 +71,7 @@ class _EntryPageState extends State<EntryPage> {
   @override
   void initState() {
     super.initState();
-    // 批次名现在是主键（文件名 + 记忆档案归属），预填一个周号只会诱导他照单全收，
-    // 所以留空，这名字得是他自己起的。
+    // 批次名就是文件名，预填一个周号只会诱导他照单全收，所以留空，这名字得是他自己起的。
     _label = TextEditingController();
     _label.addListener(_syncSourceToLabel);
     _source = context.read<WordbookStore>().defaultSource;
@@ -293,23 +291,6 @@ class _EntryPageState extends State<EntryPage> {
         if (old.containsKey(e.slug)) e.slug: old[e.slug]!,
     };
 
-    // 记忆档案按单词文本认人。覆盖时旧表整个作废，改了拼法的那个词在新表里是生面孔，
-    // 档案就没人认领 —— 练到第 5 档会一夜清零。先让 store 认一遍（只认差一个字母的，
-    // 认不出就不动），剩下的死档案由排期那边的词池口径挡在汇总数字外面。
-    final rehomed = <String>[];
-    if (existing != null && mode == 'replace') {
-      final fresh = {for (final e in words) e.word.toLowerCase()};
-      rehomed.addAll(
-        await context.read<ScheduleStore>().rehomeOrphans(
-          [
-            for (final e in existing.words)
-              if (!fresh.contains(e.word.toLowerCase())) e.word,
-          ],
-          [for (final e in words) e.word],
-        ),
-      );
-    }
-
     await store.save(
       WeekBook(
         label: label,
@@ -321,11 +302,9 @@ class _EntryPageState extends State<EntryPage> {
       ),
     );
     if (!mounted) return;
-    final moved = rehomed.isEmpty
-        ? ''
-        : '\n进度跟着新拼法搬过去：${rehomed.join('、')}';
     setState(
-      () => _message = '已存 $label（${words.length} 词，${marks.length} 个发音已在设备上）$moved',
+      () => _message =
+          '已存 $label（${words.length} 词，${marks.length} 个发音已在设备上）',
     );
     ScaffoldMessenger.of(
       context,

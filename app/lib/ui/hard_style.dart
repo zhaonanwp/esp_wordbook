@@ -2,14 +2,13 @@ import 'package:flutter/material.dart';
 
 /// 「硬边」皮肤：奶油底 + 2px 黑框 + 右下实心偏移阴影 + 蓝/红实心块。
 /// 全站只有 hardTheme() 一个主题，页面里不要再写死颜色。
-/// 语义色就三个：blue = 正常动作，coral = 会出事（逾期/截断/失败），amber = 已毕业/攒够了。
+/// 语义色就两个：blue = 正常动作，coral = 会出事（截断 / 失败 / 设备上是谁说不清）。
 class Hard {
   static const Color bg = Color(0xFFF4EDE0);
   static const Color sheet = Color(0xFFFFFDF6);
   static const Color ink = Color(0xFF141414);
   static const Color blue = Color(0xFF3247CE);
   static const Color coral = Color(0xFFEF5340);
-  static const Color amber = Color(0xFFE39B12);
   static const Color muted = Color(0xFF6E665A);
 
   static BoxDecoration box(Color fill, {double lift = 4}) => BoxDecoration(

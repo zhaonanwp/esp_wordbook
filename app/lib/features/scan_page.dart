@@ -8,7 +8,6 @@ import 'package:provider/provider.dart';
 import '../core/protocol.dart';
 import '../data/device_link.dart';
 import '../ui/hard_style.dart';
-import 'plan_page.dart';
 
 class ScanPage extends StatefulWidget {
   const ScanPage({super.key});
@@ -91,11 +90,9 @@ class _ScanPageState extends State<ScanPage> {
       await FlutterBluePlus.stopScan();
       await link.connect(device);
       if (!mounted) return;
-      // 连上就回日常操作台（计划页：打勾 + 推今天这张表）。
-      // 以前这里跳推送页，把"连设备"和"整本重推"绑死了。
-      await Navigator.of(
-        context,
-      ).push(MaterialPageRoute(builder: (_) => const PlanPage()));
+      // 连上就退回调用方（首页那条连接栏）。这里不再往栈上加页 ——
+      // 日常动作就是首页那一下「推这批」，多跳一层只会让他以为还有别的操作台。
+      Navigator.of(context).pop();
     } on LinkException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(

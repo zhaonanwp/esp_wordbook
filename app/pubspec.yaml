@@ -3,7 +3,7 @@ description: "WORDCARD 单词机的手机端：按来源和批次录词库、排
 publish_to: 'none'
 
 # version 和 APK 文件名里的 v0.1.x 保持一致；改完 app 出包时两个一起进。
-version: 0.1.22+22
+version: 0.2.0+20
 
 environment:
   sdk: ^3.12.0

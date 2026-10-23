@@ -12,11 +12,9 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:provider/provider.dart';
 import 'package:wordcard_app/core/protocol.dart';
 import 'package:wordcard_app/data/device_link.dart';
-import 'package:wordcard_app/data/schedule.dart';
 import 'package:wordcard_app/data/wordbook_store.dart';
 import 'package:wordcard_app/features/dashboard_page.dart';
 import 'package:wordcard_app/features/entry_page.dart';
-import 'package:wordcard_app/features/plan_page.dart';
 import 'package:wordcard_app/features/push_page.dart';
 import 'package:wordcard_app/features/settings_page.dart';
 import 'package:wordcard_app/ui/hard_style.dart';
@@ -42,12 +40,7 @@ void main() {
     (t) => _look(t, const DashboardPage(), 'hard_1_home', scroll: 1000),
   );
 
-  testWidgets(
-    '计划页',
-    (t) => _look(t, const PlanPage(), 'hard_2_plan', scroll: 620),
-  );
-
-  testWidgets('推送页', (t) => _look(t, const PushPage(), 'hard_3_push'));
+  testWidgets('推送页', (t) => _look(t, const PushPage(), 'hard_2_push'));
 
   testWidgets('录入页：粘进去 + 抠词 + 冲突对话框', _lookEntry);
 
@@ -57,10 +50,9 @@ void main() {
 }
 
 class _Ctx {
-  _Ctx(this.link, this.store, this.sched);
+  _Ctx(this.link, this.store);
   final BleLink link;
   final WordbookStore store;
-  final ScheduleStore sched;
 }
 
 Future<_Ctx> _seed(WidgetTester tester) async {
@@ -78,8 +70,6 @@ Future<_Ctx> _seed(WidgetTester tester) async {
 
     final store = WordbookStore();
     await store.init();
-    final sched = ScheduleStore();
-    await sched.init();
 
     final now = DateTime.now();
     const a = ['umbrella', 'cold', 'sore throat', 'jump rope', 'fever', 'rest'];
@@ -115,22 +105,17 @@ Future<_Ctx> _seed(WidgetTester tester) async {
         ],
       ),
     );
-    for (var i = 0; i < 4; i++) {
-      await sched.report(
-        a[i],
-        '2026W41',
-        now.subtract(Duration(days: 6 - i)),
-        remembered: i.isEven,
-      );
+    // 让首页那行「发音已在设备 N 个」和「← 设备上就是这批」都不是空的。
+    final first = store.byLabel('2026W41')!;
+    for (final w in first.words.take(3)) {
+      first.audioMark[w.slug] = WeekBook.markOf('mp3', 1234567);
     }
-    await sched.report(a[0], '2026W41', now, remembered: false);
-    await sched.report(a[1], '2026W41', now, remembered: true);
-    await sched.report(b[0], '2026W42', now, remembered: true);
-    await sched.recordPush(a, now);
+    await store.save(first);
+    await store.markOnDevice('2026W41');
     // 来源是设定页里加的，词库得跟着有真用法，截图才看得出这一列不是死的。
     await store.addSource('绘本');
     await store.save(store.byLabel('2026W42')!.withSource('新东方'));
-    ctx = _Ctx(BleLink(), store, sched);
+    ctx = _Ctx(BleLink(), store);
   });
   return ctx;
 }
@@ -142,7 +127,6 @@ Widget _shell(Widget page, _Ctx ctx) {
       // 再 notifyListeners 就是这条 "used after being disposed" 断言。
       ChangeNotifierProvider.value(value: ctx.link),
       ChangeNotifierProvider.value(value: ctx.store),
-      ChangeNotifierProvider.value(value: ctx.sched),
     ],
     child: MaterialApp(
       theme: hardTheme(fontFamily: 'Look'),
@@ -209,7 +193,7 @@ Future<void> _lookEntry(WidgetTester t) async {
   expect(t.takeException(), isNull);
   await expectLater(
     find.byType(EntryPage),
-    matchesGoldenFile('goldens/hard_4_entry.png'),
+    matchesGoldenFile('goldens/hard_3_entry.png'),
   );
 
   // 存到已经存在的 2026W41 上 → 冲突对话框（覆盖是红块）。
@@ -219,7 +203,7 @@ Future<void> _lookEntry(WidgetTester t) async {
   await _settle(t);
   await expectLater(
     find.byType(AlertDialog),
-    matchesGoldenFile('goldens/hard_5_entry_conflict.png'),
+    matchesGoldenFile('goldens/hard_4_entry_conflict.png'),
   );
   await t.tap(find.text('取消'));
   await _settle(t);
@@ -229,7 +213,7 @@ Future<void> _lookEntry(WidgetTester t) async {
   await _settle(t);
   await expectLater(
     find.byType(AlertDialog),
-    matchesGoldenFile('goldens/hard_6_entry_edit.png'),
+    matchesGoldenFile('goldens/hard_5_entry_edit.png'),
   );
   await t.tap(find.text('取消'));
 }
@@ -244,9 +228,8 @@ Future<void> _lookManage(WidgetTester t) async {
 
   await t.pumpWidget(_shell(const DashboardPage(), ctx));
   await _settle(t);
-  // 词库列表在页面最底下，而首页现在一屏放不下（今日栏带十行词，下面还有档位和十四天格子）。
-  // ListView 的 children 滚过去之前是 offstage 的，find.byIcon(...).first 直接抛
-  // "No element"，所以只能一段段硬拖到看得见。
+  // 词库列表在页面底下，滚过去之前 ListView 的 children 是 offstage 的，
+  // find.byIcon(...).first 直接抛 "No element"，所以只能一段段硬拖到看得见。
   for (var i = 0;
       i < 8 && find.byIcon(Icons.edit_outlined).evaluate().isEmpty;
       i++) {
@@ -258,7 +241,7 @@ Future<void> _lookManage(WidgetTester t) async {
   expect(t.takeException(), isNull);
   await expectLater(
     find.byType(AlertDialog),
-    matchesGoldenFile('goldens/hard_7_book_manage.png'),
+    matchesGoldenFile('goldens/hard_6_book_manage.png'),
   );
 
   await t.tap(find.text('删掉这批'));
@@ -266,7 +249,7 @@ Future<void> _lookManage(WidgetTester t) async {
   expect(t.takeException(), isNull);
   await expectLater(
     find.byType(AlertDialog),
-    matchesGoldenFile('goldens/hard_8_book_delete.png'),
+    matchesGoldenFile('goldens/hard_7_book_delete.png'),
   );
   await t.tap(find.text('不删了'));
   await _settle(t);
@@ -286,7 +269,7 @@ Future<void> _lookSettings(WidgetTester t) async {
   expect(t.takeException(), isNull);
   await expectLater(
     find.byType(SettingsPage),
-    matchesGoldenFile('goldens/hard_9_settings.png'),
+    matchesGoldenFile('goldens/hard_8_settings.png'),
   );
 
   // 最后一行是设定页里加的「绘本」，前面两行是内置那两个。
@@ -294,7 +277,7 @@ Future<void> _lookSettings(WidgetTester t) async {
   await _settle(t);
   await expectLater(
     find.byType(AlertDialog),
-    matchesGoldenFile('goldens/hard_10_source_rename.png'),
+    matchesGoldenFile('goldens/hard_9_source_rename.png'),
   );
   await t.tap(find.text('取消'));
   await _settle(t);
@@ -305,7 +288,7 @@ Future<void> _lookSettings(WidgetTester t) async {
   expect(t.takeException(), isNull);
   await expectLater(
     find.byType(AlertDialog),
-    matchesGoldenFile('goldens/hard_11_source_delete.png'),
+    matchesGoldenFile('goldens/hard_10_source_delete.png'),
   );
   await t.tap(find.text('不删'));
 }

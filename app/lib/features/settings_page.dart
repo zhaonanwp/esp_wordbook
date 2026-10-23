@@ -1,15 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../data/schedule.dart';
 import '../data/wordbook_store.dart';
 import '../ui/hard_style.dart';
 
-/// 设定。两件事：每天上几个新词（从计划页挪过来的，那儿每天要看的东西已经够多了），
-/// 以及词库来源那一列是内置的「课本 / 新东方」还是他自己加的。
+/// 设定。就一件事：词库来源那一列是内置的「课本 / 新东方」还是他自己加的。
 ///
-/// 边界要说清楚：来源**只当分组和显示，不参与排日子**，所以改名敢带着那几批一起走；
-/// 删掉也不碰词、不碰发音标记、不碰排期，那几批只是顶着一个不在列表里的名字继续显示。
+/// 边界要说清楚：来源**只当分组和显示**，所以改名敢带着那几批一起走；
+/// 删掉也不碰词、不碰发音标记，那几批只是顶着一个不在列表里的名字继续显示。
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -88,54 +86,11 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final store = context.watch<WordbookStore>();
-    final sched = context.watch<ScheduleStore>();
     return Scaffold(
       appBar: AppBar(title: const Text('设定')),
       body: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 14, 12, 0),
-            child: Text('新词节奏', style: Hard.label(context)),
-          ),
-          HardCard(
-            margin: Hard.gutter(top: 6, bottom: 6),
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '每天引入新词 ${sched.newPerDay} 个',
-                        style: Hard.label(context),
-                      ),
-                    ),
-                    HardIconButton(
-                      icon: Icons.remove,
-                      tooltip: '少一点',
-                      onPressed: () => sched.setNewPerDay(sched.newPerDay - 1),
-                    ),
-                    const SizedBox(width: 4),
-                    HardIconButton(
-                      icon: Icons.add,
-                      tooltip: '多一点（最多 30）',
-                      onPressed: () => sched.setNewPerDay(sched.newPerDay + 1),
-                    ),
-                  ],
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    '只管每天上几个新词。到期的复习不受它管，那部分是全局按日子排的。'
-                    '改完当天就生效：计划页那张表立刻按新数量重算。',
-                    style: Hard.body(context),
-                  ),
-                ),
-              ],
-            ),
-          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 14, 12, 0),
             child: Text('词库来源', style: Hard.label(context)),
@@ -210,8 +165,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 Padding(
                   padding: const EdgeInsets.only(top: 4, bottom: 4),
                   child: Text(
-                    '来源只分组、不排日子：每天从哪一批抽新词，是复习计划页那个选择器的事。'
-                    '改名会带着用它的那几批一起改；删掉不动词，也不动发音和排期。',
+                    '来源只分组、不决定推哪一本 —— 那永远是他在首页挑的。'
+                    '改名会带着用它的那几批一起改；删掉不动词，也不动发音标记。',
                     style: Hard.body(context),
                   ),
                 ),

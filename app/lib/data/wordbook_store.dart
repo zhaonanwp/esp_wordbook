@@ -28,7 +28,7 @@ class WeekBook {
   }) : audioMark = audioMark ?? {};
 
   /// 批次名，他自己起（`Unit 3`、`10-11 那节课`、`2026W42`）。跨来源唯一，
-  /// 因为文件名和记忆档案的归属都按它找。
+  /// 因为一本书就是一个文件，同名批次靠录入页那个覆盖/追加对话框分辨。
   final String label;
   final String source;
   final String version;
@@ -137,6 +137,16 @@ class WordbookStore extends ChangeNotifier {
   Directory? get audioDir => _audioDir;
   Directory? _audioDir;
 
+  /// 设备上现在装的是哪一批（批次名，'' = 还没推过）。设备只有整表替换这一种语义，
+  /// 所以这个指针永远只有一个值。存 `documents/device_sheet.json`。
+  ///
+  /// 它是**手机这边的记账**，不是从设备读回来的：推成功才写，所以格过 storage、
+  /// 或者设备被别的手机推过之后，这个值会失真 —— 界面上得说清是"上次推的是这批"。
+  String onDevice = '';
+  DateTime? onDeviceAt;
+
+  String? _deviceSheetPath;
+
   String statusLine = '';
 
   bool _ready = false;
@@ -149,7 +159,9 @@ class WordbookStore extends ChangeNotifier {
     await _root!.create(recursive: true);
     await _audioDir!.create(recursive: true);
     _sourcesPath = '${docs.path}/sources.json';
+    _deviceSheetPath = '${docs.path}/device_sheet.json';
     await _loadSources();
+    await _loadOnDevice();
     await reload();
     if (_weeks.isEmpty) {
       await seedFromAsset();
@@ -243,7 +255,44 @@ class WordbookStore extends ChangeNotifier {
     if (await file.exists()) {
       await file.delete();
     }
+    // 删掉的正是设备上那一批的话，指针跟着清空 —— 留个不存在的名字在首页上，
+    // 比"不知道"更难查。设备那张表本身不受影响。
+    if (onDevice == label) await markOnDevice('');
     await reload();
+  }
+
+  /// 推成功之后调用。传空串表示"不知道设备上是谁"。
+  Future<void> markOnDevice(String label) async {
+    onDevice = label;
+    onDeviceAt = label.isEmpty ? null : DateTime.now();
+    final path = _deviceSheetPath;
+    if (path != null) {
+      final tmp = File('$path.tmp');
+      await tmp.writeAsString(
+        jsonEncode({
+          'label': label,
+          'at': onDeviceAt?.toIso8601String(),
+        }),
+        flush: true,
+      );
+      await tmp.rename(path);
+    }
+    notifyListeners();
+  }
+
+  Future<void> _loadOnDevice() async {
+    final path = _deviceSheetPath;
+    if (path == null) return;
+    final file = File(path);
+    if (!await file.exists()) return;
+    try {
+      final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      onDevice = (json['label'] ?? '') as String;
+      onDeviceAt = DateTime.tryParse((json['at'] ?? '') as String);
+    } catch (e) {
+      debugPrint('WordbookStore: 设备指针读不动 $path: $e');
+      statusLine = '设备上那批的记录读不了，去推送页重新推一次就更新了';
+    }
   }
 
   // ---- 来源：设定页管的就是这一列 ----
@@ -276,8 +325,8 @@ class WordbookStore extends ChangeNotifier {
     return null;
   }
 
-  /// 改名。来源既不是文件名也不是记忆档案的外键，所以敢连带改：
-  /// 用它的那几批跟着换姓，词、发音标记和排期都不动。
+  /// 改名。来源既不是文件名也不是设备上那批的指针，所以敢连带改：
+  /// 用它的那几批跟着换姓，词和发音标记都不动。
   Future<String?> renameSource(String from, String to) async {
     final name = to.trim();
     if (name == from) return null;
